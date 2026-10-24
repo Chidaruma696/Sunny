@@ -355,8 +355,7 @@ class Window(QMainWindow):
             self.worker.start()
             self._refresh()
             return
-        index = value_index(self.source, self.info)
-        parser = SpanishParser([c.header for c in self.info.columns], lookup=lambda v: index.get(v, []))
+        parser = SpanishParser([c.header for c in self.info.columns], values=value_index(self.source, self.info))
         parsed = parser.parse(text)
         self.rules = parsed.rules
         self.notes = "\n".join(parsed.notes)

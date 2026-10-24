@@ -4,12 +4,20 @@ import pytest
 
 from sunny.parser import SpanishParser, parse_number, parse_value
 
-HEADERS = ["Factura", "Cliente", "Estado", "Importe", "Vence", "Fecha de pago"]
-VALUES = {"pendiente": ["Estado"], "pagado": ["Estado"], "acme": ["Cliente"], "cancelado": ["Estado"], "x": ["Cliente", "Estado"]}
+HEADERS = ["Factura", "Cliente", "Estado", "Importe", "Vence", "Fecha de pago", "Unidad"]
+VALUES = {"pendiente": ["Estado"], "pagado": ["Estado"], "acme": ["Cliente"], "cancelado": ["Estado"], "x": ["Cliente", "Estado"],
+          "vw vocho 2001 blanco": ["Unidad"], "nissan tsuru": ["Unidad"], "vocho azul": ["Unidad"]}
 
 
 def parser():
-    return SpanishParser(HEADERS, lookup=lambda v: VALUES.get(v, []))
+    return SpanishParser(HEADERS, values=VALUES)
+
+
+def test_contains_finds_the_column_by_a_piece_of_text():
+    r = one("pinta todo lo que diga vocho de verde")
+    assert (r.column, r.condition.op, r.condition.value, r.style.fill) == ("Unidad", "contains", "vocho", "C6EFCE")
+    r = one("amarillo lo que empiece por nissan")
+    assert (r.column, r.condition.op, r.condition.value) == ("Unidad", "starts_with", "nissan")
 
 
 def one(text):

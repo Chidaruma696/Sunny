@@ -147,14 +147,36 @@ class _Clause:
 class SpanishParser:
     """Turns a Spanish request into rules for the given headers.
 
-    LOOKUP, when given, maps a normalized text value to the headers of the columns that contain
-    it, so "rojo los PENDIENTE" finds the Estado column without naming it.
+    VALUES, when given, maps each normalized text value of the sheet to the headers of the columns
+    that contain it (see workbook.value_index), so "rojo los PENDIENTE" finds the Estado column
+    without naming it, and "verde lo que diga vocho" finds the column whose texts contain "vocho".
     """
 
-    def __init__(self, headers: list[str], lookup: Callable[[str], list[str]] | None = None):
+    def __init__(self, headers: list[str], values: dict[str, list[str]] | None = None,
+                 lookup: Callable[[str], list[str]] | None = None):
         self.headers = headers
         self._norm_headers = sorted(((normalize(h).strip(), h) for h in headers), key=lambda p: -len(p[0]))
-        self.lookup = lookup or (lambda _v: [])
+        self.values = values or {}
+        self.lookup = lookup
+
+    def columns_for(self, value: str, op: str) -> list[str]:
+        """Headers of the columns where VALUE (normalized) appears, exactly or as a piece,
+        depending on the operator. Header order of the sheet."""
+        needle = normalize(value).strip()
+        if not needle:
+            return []
+        if self.lookup is not None and op not in ("contains", "not_contains", "starts_with", "ends_with"):
+            found = set(self.lookup(needle))
+        else:
+            found = set()
+            for key, headers in self.values.items():
+                hit = {"contains": needle in key, "not_contains": needle in key,
+                       "starts_with": key.startswith(needle), "ends_with": key.endswith(needle)}.get(op, key == needle)
+                if hit:
+                    found.update(headers)
+            if not found and self.lookup is not None:
+                found = set(self.lookup(needle))
+        return [h for h in self.headers if h in found]
 
     # --- splitting
     def split(self, text: str) -> list[str]:
@@ -274,7 +296,7 @@ class SpanishParser:
             candidates: list[str] = []
             for v in ([value] if value is not None else []) + list(values):
                 if isinstance(v, str):
-                    candidates = self.lookup(normalize(v).strip())
+                    candidates = self.columns_for(v, op)
                     if candidates:
                         break
             if len(candidates) == 1:

@@ -88,8 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         from .parser import SpanishParser
         from .workbook import value_index
 
-        index = value_index(source, info)
-        parsed = SpanishParser([c.header for c in info.columns], lookup=lambda v: index.get(v, [])).parse(args.orden)
+        parsed = SpanishParser([c.header for c in info.columns], values=value_index(source, info)).parse(args.orden)
         rules, notes, errors = parsed.rules, "\n".join(parsed.notes), []
 
     for e in errors:

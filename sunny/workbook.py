@@ -103,10 +103,12 @@ def inspect(path: Path, sheet: str | None = None, header_row: int = 1) -> SheetI
                      last_row=header_row + len(data), columns=columns)
 
 
-def value_index(path: Path, info: SheetInfo, limit: int = 500) -> dict[str, list[str]]:
+def value_index(path: Path, info: SheetInfo, limit: int | None = None) -> dict[str, list[str]]:
     """Which columns contain each text value, for requests that name a value but not its column
-    ("rojo los PENDIENTE"). Columns with more than LIMIT distinct values are skipped: those are
-    free text, not categories. Keys are casefolded, accent-free values. Everything stays local."""
+    ("rojo los PENDIENTE", "verde lo que diga vocho"). Every text column counts, free text
+    included: "diga vocho" has to find the description column. LIMIT, if given, skips columns
+    with more distinct values than that. Keys are casefolded, accent-free values. Everything
+    stays local."""
     import unicodedata
 
     def norm(v: Any) -> str:
@@ -124,7 +126,7 @@ def value_index(path: Path, info: SheetInfo, limit: int = 500) -> dict[str, list
         if col.kind not in ("text", "mixed"):
             continue
         distinct = {norm(r[col.index - 1]) for r in rows if col.index - 1 < len(r) and isinstance(r[col.index - 1], str) and r[col.index - 1].strip()}
-        if not distinct or len(distinct) > limit:
+        if not distinct or (limit is not None and len(distinct) > limit):
             continue
         for v in distinct:
             index.setdefault(v, []).append(col.header)
