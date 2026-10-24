@@ -15,11 +15,12 @@ from PySide6.QtWidgets import (
 )
 
 from . import APP_KANA, APP_NAME, REPO_URL, __version__
+from .parser import SpanishParser
 from .planner import DEFAULT_MODEL, Plan, PlannerError, plan
 from .rules import Rule, RuleError, plan_to_dict, rules_from_plan
 from .settings import ORG, load_settings, save_settings
 from .theme import MUTED, QSS, SUN_DARK, shadow
-from .workbook import Preview, SheetInfo, apply, inspect, output_path, preview, sheet_names
+from .workbook import Preview, SheetInfo, apply, inspect, output_path, preview, sheet_names, value_index
 
 MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
 
@@ -78,10 +79,18 @@ class DropLine(QLineEdit):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent, api_key: str, model: str):
+    def __init__(self, parent, api_key: str, model: str, use_model: bool):
         super().__init__(parent)
         self.setWindowTitle("Ajustes")
         form = QFormLayout(self)
+        intro = QLabel("Sunny entiende las órdenes en español por sí sola, sin internet ni cuentas. "
+                       "Si además quieres que las entienda Claude (frases más libres), activa esto y pon una clave.")
+        intro.setObjectName("note")
+        intro.setWordWrap(True)
+        form.addRow(intro)
+        self.use_model = QCheckBox("Usar Claude para entender la orden (opcional)")
+        self.use_model.setChecked(use_model)
+        form.addRow(self.use_model)
         self.key = QLineEdit(api_key)
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
         self.key.setPlaceholderText("sk-ant-…")
@@ -96,6 +105,10 @@ class SettingsDialog(QDialog):
         note.setObjectName("note")
         note.setWordWrap(True)
         form.addRow(note)
+        self.use_model.toggled.connect(self.key.setEnabled)
+        self.use_model.toggled.connect(self.model.setEnabled)
+        self.key.setEnabled(use_model)
+        self.model.setEnabled(use_model)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -329,15 +342,27 @@ class Window(QMainWindow):
         if not text:
             return
         settings = load_settings()
-        if not settings.get("api_key"):
-            QMessageBox.information(self, APP_NAME, "Falta la clave de la API. Ponla en Ajustes.")
-            self._settings()
+        if settings.get("use_model"):
+            if not settings.get("api_key"):
+                QMessageBox.information(self, APP_NAME, "Para usar Claude hace falta la clave de la API. Ponla en Ajustes, "
+                                        "o desactiva «Usar Claude» y Sunny entiende la orden por sí sola.")
+                self._settings()
+                return
+            self.status.setText("Entendiendo…")
+            self.worker = PlanWorker(text, self.info.describe(), settings["api_key"], settings.get("model") or DEFAULT_MODEL)
+            self.worker.done.connect(self._planned)
+            self.worker.failed.connect(self._plan_failed)
+            self.worker.start()
+            self._refresh()
             return
-        self.status.setText("Entendiendo…")
-        self.worker = PlanWorker(text, self.info.describe(), settings["api_key"], settings.get("model") or DEFAULT_MODEL)
-        self.worker.done.connect(self._planned)
-        self.worker.failed.connect(self._plan_failed)
-        self.worker.start()
+        index = value_index(self.source, self.info)
+        parser = SpanishParser([c.header for c in self.info.columns], lookup=lambda v: index.get(v, []))
+        parsed = parser.parse(text)
+        self.rules = parsed.rules
+        self.notes = "\n".join(parsed.notes)
+        extra = f"  ⚠ {len(parsed.notes)} sin entender" if parsed.notes else ""
+        self.status.setText(f"{len(self.rules)} reglas{extra}")
+        self._preview()
         self._refresh()
 
     def _planned(self, result: Plan) -> None:
@@ -447,19 +472,19 @@ class Window(QMainWindow):
     # ------------------------------------------------------------------ misc
     def _settings(self) -> None:
         current = load_settings()
-        dlg = SettingsDialog(self, current.get("api_key", ""), current.get("model", ""))
+        dlg = SettingsDialog(self, current.get("api_key", ""), current.get("model", ""), bool(current.get("use_model")))
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            save_settings(dlg.key.text().strip(), dlg.model.currentText().strip() or DEFAULT_MODEL)
+            save_settings(dlg.key.text().strip(), dlg.model.currentText().strip() or DEFAULT_MODEL, dlg.use_model.isChecked())
 
     def _about(self) -> None:
         QMessageBox.about(self, f"Acerca de {APP_NAME}", f"""
 <h2 style="margin:0">{APP_NAME} <span style="color:{SUN_DARK}">{APP_KANA}</span> <small>v{__version__}</small></h2>
 <p>Dices en palabras qué quieres resaltar en un Excel y Sunny lo convierte en formato condicional:
 reglas que Excel sigue aplicando cuando cambian los datos. El original no se toca.</p>
+<p>Las órdenes se entienden aquí mismo, en español, sin internet. Opcionalmente puede pedírselo a
+<a href="https://www.anthropic.com/claude">Claude</a> (API de Anthropic, con tu clave); entonces solo viajan las cabeceras y la orden.</p>
 <p><b>Créditos</b><br>
 Diseño: estética Komi Store (papel y tinta).<br>
-Entender la orden: <a href="https://www.anthropic.com/claude">Claude</a> (API de Anthropic); al modelo solo viajan
-las cabeceras y la orden.<br>
 Excel: <a href="https://openpyxl.readthedocs.io/">openpyxl</a> (MIT).<br>
 Interfaz: <a href="https://doc.qt.io/qtforpython-6/">Qt for Python / PySide6</a> (LGPL-3.0).<br>
 Código fuente: <a href="{REPO_URL}">{REPO_URL}</a> (Apache 2.0).</p>

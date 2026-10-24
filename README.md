@@ -28,9 +28,10 @@
 ---
 
 > [!IMPORTANT]
-> **Your data stays on your machine.** To understand the request Sunny asks Claude, but it only sends the column
-> headers, their types and your sentence. Not one cell value leaves the computer. The repository ignores `*.xlsx`
-> so office files never end up in git by accident.
+> **Nothing leaves your machine.** Sunny understands Spanish requests on its own, with no internet, no account and
+> no key. Optionally it can ask Claude instead (your own API key, off by default); even then it only sends the
+> column headers, their types and your sentence, never a cell value. The repository ignores `*.xlsx` so office
+> files never end up in git by accident.
 
 <br/>
 
@@ -38,7 +39,7 @@
 
 1. Open the [latest release](https://github.com/Chidaruma696/Sunny/releases/latest) and grab `Sunny-x.y.z-setup.exe`.
 2. Run it. It installs per user without asking for administrator rights. No Python or anything else required.
-3. Open Sunny, go to **Ajustes** and paste an [Anthropic API key](https://console.anthropic.com/). One key is enough for the whole office; each request costs a fraction of a cent.
+3. Open Sunny from the Start menu. That is all: nothing to configure.
 
 <br/>
 
@@ -58,9 +59,9 @@ Before anything is written you see every rule as a line ("Filas con Estado PENDI
 
 ## ⚙️ How it works
 
-1. `workbook.py` reads the sheet's shape: headers, the type of each column (number, date, text), row count.
-2. `planner.py` sends that shape plus your sentence to Claude with a fixed JSON schema (structured output), so the answer is rules, never prose. Default model `claude-opus-5-5`, changeable in the settings.
-3. `rules.py` validates each rule (known column, sane operator, real color) and drops the odd one without losing the rest.
+1. `workbook.py` reads the sheet's shape: headers, the type of each column (number, date, text), row count, and which text values live in which column.
+2. `parser.py` understands the sentence in Spanish, with no model: it splits it into clauses (commas, "y", "pero", ";"), reads the style words (*rojo, verde, amarillo, azul, naranja, gris, morado, negrita, cursiva, tachado*, or a `#hex`), the scope (*fila* or *celda*), the column (a header you name, singular or plural, or the column that contains the value you name: *"rojo los PENDIENTE"* finds *Estado* by itself) and the condition (*sea, no sea, mayor de, más de, menor que, entre, contenga, empiece por, termine en, vacío, sin, repetido, X o Y*). Numbers understand *50 mil*, *$12,000.50*, *1.5 millones*; dates *31/01/2026*. What it does not understand is reported as such, never guessed.
+3. `rules.py` validates each rule (known column, sane operator, real color) and drops the odd one without losing the rest. Optionally, `planner.py` can ask Claude instead of the parser (Ajustes → *Usar Claude*, with your API key): same JSON schema in, same rules out, and only the headers travel.
 4. `workbook.py` counts the matches in Python for the preview and, on **APLICAR**, writes `FormulaRule`s with [openpyxl](https://openpyxl.readthedocs.io/) into a copy. The formulas pin the tested column (`$C2="PENDIENTE"`), guard numeric comparisons with `ISNUMBER` so text never counts as "greater than", and express dates as `DATE(y,m,d)`.
 
 The window is Qt ([PySide6](https://doc.qt.io/qtforpython-6/)) with the Komi look: paper and ink, square corners, hard shadows, sunlight palette. The interface is in Spanish.
@@ -73,20 +74,21 @@ The same executable (or `python -m sunny`) takes arguments:
 
 ```
 Sunny.exe ventas.xlsx                                       # opens the window with that file
-Sunny.exe --cli ventas.xlsx "rojo donde Estado sea PENDIENTE"   # asks the model, previews, writes "ventas - Sunny.xlsx"
-Sunny.exe --cli ventas.xlsx --reglas mes.json -o listo.xlsx     # applies saved rules, no model, no network
+Sunny.exe --cli ventas.xlsx "rojo donde Estado sea PENDIENTE"   # understands, previews, writes "ventas - Sunny.xlsx"
+Sunny.exe --cli ventas.xlsx --reglas mes.json -o listo.xlsx     # applies saved rules
 ```
 
 | Option | Effect |
 | --- | --- |
 | `-s HOJA` | Sheet to work on (default: the active one) |
 | `-o ARCHIVO.xlsx` | Where to save (default: `<name> - Sunny.xlsx` next to the original) |
-| `--reglas REGLAS.json` | Apply saved rules instead of asking the model |
+| `--reglas REGLAS.json` | Apply saved rules instead of understanding a sentence |
 | `--guardar-reglas REGLAS.json` | Save the rules obtained |
-| `--modelo MODELO` | Claude model for this run |
+| `--claude` | Let Claude understand the sentence instead of the built-in parser (needs an API key) |
+| `--modelo MODELO` | Claude model, with `--claude` |
 | `--cli` | Work without opening the window |
 
-The API key comes from the settings saved by the window or from `ANTHROPIC_API_KEY`.
+With `--claude`, the API key comes from the settings saved by the window or from `ANTHROPIC_API_KEY`.
 
 <br/>
 
@@ -114,9 +116,10 @@ python -m venv .venv
 Layout:
 
 ```
-sunny/rules.py      Rule model, JSON schema for the planner, validation
-sunny/workbook.py   Sheet shape, preview counts, conditional formatting with openpyxl
-sunny/planner.py    Claude call with structured output (headers + request in, rules out)
+sunny/rules.py      Rule model, JSON schema, validation
+sunny/parser.py     The Spanish request understood without a model (clauses, styles, columns, conditions)
+sunny/workbook.py   Sheet shape, value index, preview counts, conditional formatting with openpyxl
+sunny/planner.py    Optional: Claude call with structured output (headers + request in, rules out)
 sunny/settings.py   API key and model, shared by window and CLI
 sunny/gui.py        PySide6 window (drag and drop, preview table, apply)
 sunny/theme.py      Komi QSS, Sunny palette
@@ -131,7 +134,7 @@ build.ps1           All of the above in one step
 
 ## 🗺️ Roadmap
 
-- [ ] Offline mode: a small rule syntax for people who would rather not use a model.
+- [ ] More ways of saying things (the parser learns from real office sentences; send the ones it misses).
 - [ ] Number formats and column widths as part of a request.
 - [ ] Several sheets in one go.
 - [ ] Dark theme.

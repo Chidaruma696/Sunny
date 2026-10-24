@@ -35,7 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-o", "--salida", metavar="ARCHIVO.xlsx", help="dónde guardar (por defecto, «<nombre> - Sunny.xlsx» junto al original)")
     p.add_argument("--reglas", metavar="REGLAS.json", help="aplicar estas reglas guardadas en vez de preguntar al modelo")
     p.add_argument("--guardar-reglas", metavar="REGLAS.json", help="guardar las reglas obtenidas en este archivo")
-    p.add_argument("--modelo", metavar="MODELO", help="modelo de Claude (por defecto, el de los ajustes)")
+    p.add_argument("--claude", action="store_true", help="que la orden la entienda Claude (necesita clave) en vez del intérprete propio")
+    p.add_argument("--modelo", metavar="MODELO", help="modelo de Claude con --claude (por defecto, el de los ajustes)")
     p.add_argument("--cli", action="store_true", help="trabajar sin abrir la ventana")
     p.add_argument("-V", "--version", action="version", version=f"{APP_NAME} {__version__}")
     args = p.parse_args(argv)
@@ -67,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.reglas:
         data = json.loads(Path(args.reglas).read_text(encoding="utf-8"))
         rules, notes, errors = rules_from_plan(data)
-    else:
+    elif args.claude:
         if not args.orden:
             p.error("indica la orden entre comillas, o --reglas con un JSON")
         from .planner import DEFAULT_MODEL, PlannerError, plan
@@ -81,6 +82,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"✗ {e}")
             return 1
         rules, notes, errors = result.rules, result.notes, result.errors
+    else:
+        if not args.orden:
+            p.error("indica la orden entre comillas, o --reglas con un JSON")
+        from .parser import SpanishParser
+        from .workbook import value_index
+
+        index = value_index(source, info)
+        parsed = SpanishParser([c.header for c in info.columns], lookup=lambda v: index.get(v, [])).parse(args.orden)
+        rules, notes, errors = parsed.rules, "\n".join(parsed.notes), []
 
     for e in errors:
         print(f"⚠ {e}")

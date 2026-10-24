@@ -28,9 +28,10 @@
 ---
 
 > [!IMPORTANT]
-> **Tus datos se quedan en tu máquina.** Para entender la orden Sunny le pregunta a Claude, pero solo le manda las
-> cabeceras de las columnas, su tipo y tu frase. Ni un valor de celda sale del equipo. El repositorio ignora `*.xlsx`
-> para que los archivos de la oficina nunca acaben en git por accidente.
+> **Nada sale de tu máquina.** Sunny entiende las órdenes en español por sí sola, sin internet, sin cuenta y sin
+> clave. Opcionalmente puede preguntarle a Claude (con tu propia clave de API, apagado por defecto); incluso entonces
+> solo manda las cabeceras de las columnas, su tipo y tu frase, nunca un valor de celda. El repositorio ignora
+> `*.xlsx` para que los archivos de la oficina nunca acaben en git por accidente.
 
 <br/>
 
@@ -38,7 +39,7 @@
 
 1. Abre la [última release](https://github.com/Chidaruma696/Sunny/releases/latest) y baja `Sunny-x.y.z-setup.exe`.
 2. Ejecútalo. Se instala para tu usuario sin pedir permisos de administrador. No hace falta Python ni nada más.
-3. Abre Sunny, entra en **Ajustes** y pega una [clave de la API de Anthropic](https://console.anthropic.com/). Con una clave basta para toda la oficina; cada orden cuesta una fracción de centavo.
+3. Abre Sunny desde el menú Inicio. Ya está: no hay nada que configurar.
 
 <br/>
 
@@ -58,9 +59,9 @@ Antes de escribir nada ves cada regla como una línea («Filas con Estado PENDIE
 
 ## ⚙️ Cómo funciona
 
-1. `workbook.py` lee la forma de la hoja: cabeceras, tipo de cada columna (número, fecha, texto), cuántas filas.
-2. `planner.py` manda esa forma y tu frase a Claude con un esquema JSON fijo (salida estructurada), así la respuesta son reglas, nunca prosa. Modelo por defecto `claude-opus-5-5`, cambiable en los ajustes.
-3. `rules.py` valida cada regla (columna conocida, operador con sentido, color real) y descarta la rara sin perder las demás.
+1. `workbook.py` lee la forma de la hoja: cabeceras, tipo de cada columna (número, fecha, texto), cuántas filas, y qué valores de texto viven en qué columna.
+2. `parser.py` entiende la frase en español, sin modelo: la parte en órdenes (comas, «y», «pero», «;»), lee las palabras de estilo (*rojo, verde, amarillo, azul, naranja, gris, morado, negrita, cursiva, tachado*, o un `#hex`), el alcance (*fila* o *celda*), la columna (una cabecera que nombres, en singular o plural, o la columna que contiene el valor que dices: *«rojo los PENDIENTE»* encuentra *Estado* sola) y la condición (*sea, no sea, mayor de, más de, menor que, entre, contenga, empiece por, termine en, vacío, sin, repetido, X o Y*). Los números entienden *50 mil*, *$12,000.50*, *1.5 millones*; las fechas *31/01/2026*. Lo que no entiende lo dice tal cual, nunca lo adivina.
+3. `rules.py` valida cada regla (columna conocida, operador con sentido, color real) y descarta la rara sin perder las demás. Opcionalmente, `planner.py` puede preguntarle a Claude en vez de al intérprete (Ajustes → *Usar Claude*, con tu clave de API): mismo esquema JSON, mismas reglas, y solo viajan las cabeceras.
 4. `workbook.py` cuenta las coincidencias en Python para la vista previa y, al pulsar **APLICAR**, escribe `FormulaRule`s con [openpyxl](https://openpyxl.readthedocs.io/) en una copia. Las fórmulas fijan la columna que miran (`$C2="PENDIENTE"`), protegen las comparaciones numéricas con `ISNUMBER` para que un texto nunca cuente como «mayor que», y expresan las fechas como `DATE(a,m,d)`.
 
 La ventana es Qt ([PySide6](https://doc.qt.io/qtforpython-6/)) con la estética Komi: papel y tinta, esquinas rectas, sombras duras, paleta de sol. La interfaz está en español.
@@ -73,20 +74,21 @@ El mismo ejecutable (o `python -m sunny`) acepta argumentos:
 
 ```
 Sunny.exe ventas.xlsx                                           # abre la ventana con ese archivo
-Sunny.exe --cli ventas.xlsx "rojo donde Estado sea PENDIENTE"   # pregunta al modelo, enseña la vista previa, escribe «ventas - Sunny.xlsx»
-Sunny.exe --cli ventas.xlsx --reglas mes.json -o listo.xlsx     # aplica reglas guardadas, sin modelo ni red
+Sunny.exe --cli ventas.xlsx "rojo donde Estado sea PENDIENTE"   # entiende, enseña la vista previa, escribe «ventas - Sunny.xlsx»
+Sunny.exe --cli ventas.xlsx --reglas mes.json -o listo.xlsx     # aplica reglas guardadas
 ```
 
 | Opción | Efecto |
 | --- | --- |
 | `-s HOJA` | Hoja con la que trabajar (por defecto, la activa) |
 | `-o ARCHIVO.xlsx` | Dónde guardar (por defecto, `<nombre> - Sunny.xlsx` junto al original) |
-| `--reglas REGLAS.json` | Aplicar reglas guardadas en vez de preguntar al modelo |
+| `--reglas REGLAS.json` | Aplicar reglas guardadas en vez de entender una frase |
 | `--guardar-reglas REGLAS.json` | Guardar las reglas obtenidas |
-| `--modelo MODELO` | Modelo de Claude para esta vez |
+| `--claude` | Que la frase la entienda Claude en vez del intérprete propio (necesita clave de API) |
+| `--modelo MODELO` | Modelo de Claude, con `--claude` |
 | `--cli` | Trabajar sin abrir la ventana |
 
-La clave de la API sale de los ajustes que guarda la ventana o de `ANTHROPIC_API_KEY`.
+Con `--claude`, la clave de la API sale de los ajustes que guarda la ventana o de `ANTHROPIC_API_KEY`.
 
 <br/>
 
@@ -114,9 +116,10 @@ python -m venv .venv
 Mapa:
 
 ```
-sunny/rules.py      Modelo de regla, esquema JSON para el planificador, validación
-sunny/workbook.py   Forma de la hoja, conteo para la vista previa, formato condicional con openpyxl
-sunny/planner.py    Llamada a Claude con salida estructurada (cabeceras + orden entran, reglas salen)
+sunny/rules.py      Modelo de regla, esquema JSON, validación
+sunny/parser.py     La orden en español entendida sin modelo (trozos, estilos, columnas, condiciones)
+sunny/workbook.py   Forma de la hoja, índice de valores, conteo para la vista previa, formato condicional con openpyxl
+sunny/planner.py    Opcional: llamada a Claude con salida estructurada (cabeceras + orden entran, reglas salen)
 sunny/settings.py   Clave de la API y modelo, compartidos por ventana y CLI
 sunny/gui.py        Ventana PySide6 (arrastrar y soltar, tabla de vista previa, aplicar)
 sunny/theme.py      QSS Komi, paleta Sunny
@@ -131,7 +134,7 @@ build.ps1           Todo lo anterior en un paso
 
 ## 🗺️ Hoja de ruta
 
-- [ ] Modo sin conexión: una sintaxis chica de reglas para quien prefiera no usar un modelo.
+- [ ] Más maneras de decir las cosas (el intérprete aprende de frases reales de oficina; manda las que no entienda).
 - [ ] Formatos de número y anchos de columna como parte de la orden.
 - [ ] Varias hojas de una vez.
 - [ ] Tema oscuro.

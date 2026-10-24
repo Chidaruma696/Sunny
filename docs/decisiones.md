@@ -22,4 +22,19 @@ Pintar celdas con openpyxl era lo fácil, pero deja un archivo muerto: cambias u
 - La vista previa cuenta en Python con la misma semántica que las fórmulas, para que el «37 filas» que ve el usuario sea lo que Excel pinta. Está probado en `tests/`.
 - Siempre se escribe en una copia (`<nombre> - Sunny.xlsx`); escribir sobre el original está prohibido en código.
 
-Pendiente de decidir: un modo sin modelo (sintaxis chica de reglas) para quien no quiera clave, y si las reglas de la misma columna que se pisan deben llevar `stopIfTrue`.
+Pendiente de decidir: si las reglas de la misma columna que se pisan deben llevar `stopIfTrue`.
+
+## 2026-10-24 · Sin clave: el español se entiende aquí (0.2.0)
+
+La 0.1.0 pedía una clave de la API de Anthropic nada más abrirla, y eso se cayó a la primera: «¿cómo que pide clave? sin nada de eso». Tenía razón: para la gente de oficina una clave, una cuenta y un cobro por uso son tres barreras, y el abanico de órdenes que Sunny acepta es lo bastante corto como para entenderlo sin modelo. Así que `parser.py` entiende la frase en español por sí solo y Claude pasa a ser opcional, apagado por defecto (Ajustes → «Usar Claude», o `--claude` en la terminal).
+
+Cómo entiende:
+
+- **Trozos.** Separa por `;`, salto de línea, punto, «pero», «mientras que». Una coma o una «y» separa dos órdenes solo cuando a cada lado hay una palabra de estilo propia; si no, pertenece a la orden («entre 1 y 5», «PAGADO o CANCELADO»).
+- **Estilo.** Colores en español con sus plurales y femeninos (rojo, verde, amarillo, azul, naranja, gris, morado/lila/violeta), cada uno con el relleno y la letra oscura de los preajustes de Excel; `#hex` tal cual; negrita, cursiva, tachado. «Letra roja» pinta solo la letra.
+- **Alcance.** «fila», «renglón», «línea», «registro» → la fila entera; «celda» o nada → la celda. Una orden sin columna ni alcance («…, verde las PAGADO») hereda el alcance de la anterior: es una continuación.
+- **Columna.** La cabecera que se nombre, sin tildes ni mayúsculas, y tolerando singular/plural («Importes» para «Importe»). Si no se nombra ninguna, se busca el valor dicho en un índice local de valores de texto por columna («rojo los PENDIENTE» → Estado); si está en varias columnas, se pide que la nombre; si en ninguna, se dice qué columnas hay. El índice se calcula en la máquina y nunca sale de ella.
+- **Condición.** sea / es / igual a (y listas con «o» → `in`), no sea / distinto de, mayor que / más de / superior a / >, mayor o igual / a partir de / al menos, menor que / menos de / <, menor o igual / hasta / como máximo, entre X y Y, contenga / incluya / diga, no contenga, empiece por, termine en, vacío / en blanco / sin X / que no tenga X, con dato / no vacío, repetido / duplicado. Sin operador, el resto de la frase es el valor («Estado PENDIENTE»). Números: «50 mil», «1.5 millones», «$12,000.50», «50.000»; fechas: `31/01/2026` y `2026-01-31`.
+- **Lo que no entiende lo dice**, con la frase citada y el motivo («no dice qué color poner», «no sé qué columna mirar; nómbrala (…)»), y sigue con las demás. Nunca adivina una regla.
+
+Las descripciones que ve el usuario las genera `describe` a partir de la regla («Filas con Estado igual a PENDIENTE, en rojo»), así son iguales vengan del intérprete, de Claude o de un JSON guardado. Probado con 23 pruebas de frases, además de las de reglas y libro.
