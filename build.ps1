@@ -73,4 +73,9 @@ if (-not $iscc) {
 Write-Host "Inno Setup..."
 Invoke-Native "`"$iscc`" /Q /DMyAppVersion=$version installer\Sunny.iss"
 
-Write-Host "Done: dist\Sunny-$version-setup.exe"
+# The updater inside Sunny checks the installer against this file, published next to it in the release.
+$setup = "dist\Sunny-$version-setup.exe"
+$hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+Set-Content -Path "$setup.sha256" -Value "$hash *Sunny-$version-setup.exe" -Encoding ascii -NoNewline
+
+Write-Host "Done: $setup (+ .sha256)"

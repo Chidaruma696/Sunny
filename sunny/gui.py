@@ -16,13 +16,11 @@ from PySide6.QtWidgets import (
 
 from . import APP_KANA, APP_NAME, REPO_URL, __version__
 from .parser import SpanishParser
-from .planner import DEFAULT_MODEL, Plan, PlannerError, plan
 from .rules import Rule, RuleError, plan_to_dict, rules_from_plan
 from .settings import ORG, load_settings, save_settings
 from .theme import MUTED, QSS, SUN_DARK, shadow
+from .updater import Release, UpdateError, check, download, frozen, install
 from .workbook import Preview, SheetInfo, apply, inspect, output_path, preview, sheet_names, value_index
-
-MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
 
 
 def resource(name: str) -> Path:
@@ -34,18 +32,38 @@ def resource(name: str) -> Path:
     return base / "assets" / name
 
 
-class PlanWorker(QThread):
-    done = Signal(object)
-    failed = Signal(str)
+class UpdateCheck(QThread):
+    """Asks GitHub for a newer release; quiet on any failure (no network is not an error for the user)."""
 
-    def __init__(self, request: str, shape: dict, api_key: str, model: str):
-        super().__init__()
-        self.request, self.shape, self.api_key, self.model = request, shape, api_key, model
+    found = Signal(object)
+    none = Signal()
+    failed = Signal(str)
 
     def run(self) -> None:
         try:
-            self.done.emit(plan(self.request, self.shape, api_key=self.api_key or None, model=self.model))
-        except PlannerError as e:
+            release = check()
+        except UpdateError as e:
+            self.failed.emit(str(e))
+            return
+        if release:
+            self.found.emit(release)
+        else:
+            self.none.emit()
+
+
+class UpdateDownload(QThread):
+    progress = Signal(int, int)
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, release: Release):
+        super().__init__()
+        self.release = release
+
+    def run(self) -> None:
+        try:
+            self.done.emit(download(self.release, progress=self.progress.emit))
+        except UpdateError as e:
             self.failed.emit(str(e))
         except Exception as e:  # noqa: BLE001
             self.failed.emit(f"{type(e).__name__}: {e}")
@@ -79,36 +97,18 @@ class DropLine(QLineEdit):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent, api_key: str, model: str, use_model: bool):
+    def __init__(self, parent, check_updates: bool = True):
         super().__init__(parent)
         self.setWindowTitle("Ajustes")
         form = QFormLayout(self)
-        intro = QLabel("Sunny entiende las órdenes en español por sí sola, sin internet ni cuentas. "
-                       "Si además quieres que las entienda Claude (frases más libres), activa esto y pon una clave.")
-        intro.setObjectName("note")
-        intro.setWordWrap(True)
-        form.addRow(intro)
-        self.use_model = QCheckBox("Usar Claude para entender la orden (opcional)")
-        self.use_model.setChecked(use_model)
-        form.addRow(self.use_model)
-        self.key = QLineEdit(api_key)
-        self.key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.key.setPlaceholderText("sk-ant-…")
-        self.model = QComboBox()
-        self.model.setEditable(True)
-        self.model.addItems(MODELS)
-        self.model.setCurrentText(model or DEFAULT_MODEL)
-        form.addRow("Clave de la API de Anthropic", self.key)
-        form.addRow("Modelo", self.model)
-        note = QLabel("La clave se guarda en este equipo. Al modelo solo viajan los nombres de las "
-                      "columnas y tu orden, nunca los datos de las celdas.")
+        self.check_updates = QCheckBox("Buscar actualizaciones en GitHub al abrir")
+        self.check_updates.setChecked(check_updates)
+        form.addRow(self.check_updates)
+        note = QLabel("Sunny entiende las órdenes en español por sí sola, sin internet ni cuentas. Lo único que "
+                      "consulta fuera es si hay una versión nueva, y solo instala cuando pulsas ACTUALIZAR.")
         note.setObjectName("note")
         note.setWordWrap(True)
         form.addRow(note)
-        self.use_model.toggled.connect(self.key.setEnabled)
-        self.use_model.toggled.connect(self.model.setEnabled)
-        self.key.setEnabled(use_model)
-        self.model.setEnabled(use_model)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -124,8 +124,10 @@ class Window(QMainWindow):
         self.rules: list[Rule] = []
         self.previews: list[Preview] = []
         self.notes = ""
-        self.worker: PlanWorker | None = None
         self.last_output: Path | None = None
+        self.update_check: UpdateCheck | None = None
+        self.update_download: UpdateDownload | None = None
+        self.release: Release | None = None
         self.setWindowTitle(f"{APP_NAME} {APP_KANA}")
         self.setWindowIcon(QIcon(str(resource("sunny.ico"))))
         self.setMinimumSize(760, 700)
@@ -138,6 +140,8 @@ class Window(QMainWindow):
         if request:
             self.request.setPlainText(request)
         self._refresh()
+        if load_settings().get("check_updates", True):
+            self._check_updates(quiet=True)
 
     # ------------------------------------------------------------------ layout
     def _build(self) -> None:
@@ -168,7 +172,20 @@ class Window(QMainWindow):
         block.addWidget(kicker)
         head.addLayout(block)
         head.addStretch()
-        head.addWidget(version, 0, Qt.AlignmentFlag.AlignTop)
+        right = QVBoxLayout()
+        right.setSpacing(4)
+        right.addWidget(version, 0, Qt.AlignmentFlag.AlignRight)
+        self.update_label = QLabel("")
+        self.update_label.setObjectName("kicker")
+        self.update_label.setVisible(False)
+        right.addWidget(self.update_label, 0, Qt.AlignmentFlag.AlignRight)
+        self.btn_update = QPushButton("ACTUALIZAR")
+        self.btn_update.setObjectName("primary")
+        self.btn_update.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_update.clicked.connect(self._update)
+        self.btn_update.setVisible(False)
+        right.addWidget(self.btn_update, 0, Qt.AlignmentFlag.AlignRight)
+        head.addLayout(right)
         col.addLayout(head)
 
         # 01 file
@@ -223,10 +240,8 @@ class Window(QMainWindow):
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["", "Regla", "Columna", "Pinta", "Alcanza"])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        for i in (0, 2, 3, 4):
+            self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -262,16 +277,13 @@ class Window(QMainWindow):
         hint.setObjectName("note")
         hint.setWordWrap(True)
         foot.addWidget(hint, 1)
-        btn_settings = QPushButton("Ajustes")
-        btn_settings.setObjectName("text")
-        btn_settings.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_settings.clicked.connect(self._settings)
-        foot.addWidget(btn_settings)
-        btn_about = QPushButton("Acerca de")
-        btn_about.setObjectName("text")
-        btn_about.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_about.clicked.connect(self._about)
-        foot.addWidget(btn_about)
+        for text, slot in (("Buscar actualización", lambda: self._check_updates(quiet=False)),
+                           ("Ajustes", self._settings), ("Acerca de", self._about)):
+            b = QPushButton(text)
+            b.setObjectName("text")
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(slot)
+            foot.addWidget(b)
         col.addLayout(foot)
 
     def _panel(self, title: str) -> tuple[QFrame, QVBoxLayout]:
@@ -341,20 +353,6 @@ class Window(QMainWindow):
         text = self.request.toPlainText().strip()
         if not text:
             return
-        settings = load_settings()
-        if settings.get("use_model"):
-            if not settings.get("api_key"):
-                QMessageBox.information(self, APP_NAME, "Para usar Claude hace falta la clave de la API. Ponla en Ajustes, "
-                                        "o desactiva «Usar Claude» y Sunny entiende la orden por sí sola.")
-                self._settings()
-                return
-            self.status.setText("Entendiendo…")
-            self.worker = PlanWorker(text, self.info.describe(), settings["api_key"], settings.get("model") or DEFAULT_MODEL)
-            self.worker.done.connect(self._planned)
-            self.worker.failed.connect(self._plan_failed)
-            self.worker.start()
-            self._refresh()
-            return
         parser = SpanishParser([c.header for c in self.info.columns], values=value_index(self.source, self.info))
         parsed = parser.parse(text)
         self.rules = parsed.rules
@@ -362,19 +360,6 @@ class Window(QMainWindow):
         extra = f"  ⚠ {len(parsed.notes)} sin entender" if parsed.notes else ""
         self.status.setText(f"{len(self.rules)} reglas{extra}")
         self._preview()
-        self._refresh()
-
-    def _planned(self, result: Plan) -> None:
-        self.rules = result.rules
-        self.notes = result.notes
-        extra = f"  ⚠ {len(result.errors)} reglas descartadas" if result.errors else ""
-        self.status.setText(f"{len(self.rules)} reglas{extra}")
-        self._preview()
-        self._refresh()
-
-    def _plan_failed(self, message: str) -> None:
-        self.status.setText("")
-        QMessageBox.warning(self, APP_NAME, message)
         self._refresh()
 
     def _preview(self) -> None:
@@ -390,13 +375,13 @@ class Window(QMainWindow):
             return
         self.table.setRowCount(len(self.previews))
         for i, pv in enumerate(self.previews):
-            check = QCheckBox()
-            check.setChecked(pv.rule.enabled)
-            check.toggled.connect(lambda on, r=pv.rule: setattr(r, "enabled", on))
+            check_box = QCheckBox()
+            check_box.setChecked(pv.rule.enabled)
+            check_box.toggled.connect(lambda on, r=pv.rule: setattr(r, "enabled", on))
             holder = QWidget()
             hl = QHBoxLayout(holder)
             hl.setContentsMargins(6, 0, 6, 0)
-            hl.addWidget(check, 0, Qt.AlignmentFlag.AlignCenter)
+            hl.addWidget(check_box, 0, Qt.AlignmentFlag.AlignCenter)
             self.table.setCellWidget(i, 0, holder)
             self.table.setItem(i, 1, QTableWidgetItem(pv.rule.description or pv.rule.column))
             self.table.setItem(i, 2, QTableWidgetItem(pv.rule.column))
@@ -462,26 +447,81 @@ class Window(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.last_output.parent)))
 
     def _refresh(self) -> None:
-        busy = self.worker is not None and self.worker.isRunning()
-        self.btn_plan.setEnabled(bool(self.info) and not busy)
-        self.btn_apply.setEnabled(bool(self.info and self.rules) and not busy)
+        self.btn_plan.setEnabled(bool(self.info))
+        self.btn_apply.setEnabled(bool(self.info and self.rules))
         self.btn_save.setEnabled(bool(self.rules))
-        self.btn_load.setEnabled(bool(self.info) and not busy)
+        self.btn_load.setEnabled(bool(self.info))
+
+    # ------------------------------------------------------------------ updates
+    def _check_updates(self, quiet: bool) -> None:
+        if self.update_check is not None and self.update_check.isRunning():
+            return
+        self.update_check = UpdateCheck()
+        self.update_check.found.connect(self._update_found)
+        if not quiet:
+            self.update_check.none.connect(lambda: QMessageBox.information(self, APP_NAME, f"Ya tienes la última versión ({__version__})."))
+            self.update_check.failed.connect(lambda m: QMessageBox.information(self, APP_NAME, f"No pude consultar GitHub: {m}."))
+        self.update_check.start()
+
+    def _update_found(self, release: Release) -> None:
+        self.release = release
+        self.update_label.setText(f"NUEVA VERSIÓN {release.version}")
+        self.update_label.setVisible(True)
+        self.btn_update.setVisible(True)
+        self.btn_update.setToolTip(release.page)
+
+    def _update(self) -> None:
+        if not self.release:
+            return
+        if not frozen():
+            QDesktopServices.openUrl(QUrl(self.release.page))
+            return
+        if self.update_download is not None and self.update_download.isRunning():
+            return
+        self.btn_update.setEnabled(False)
+        self.update_label.setText("BAJANDO…")
+        self.update_download = UpdateDownload(self.release)
+        self.update_download.progress.connect(self._update_progress)
+        self.update_download.done.connect(self._update_ready)
+        self.update_download.failed.connect(self._update_failed)
+        self.update_download.start()
+
+    def _update_progress(self, done: int, total: int) -> None:
+        if total:
+            self.update_label.setText(f"BAJANDO… {done * 100 // total} %")
+        else:
+            self.update_label.setText(f"BAJANDO… {done // (1024 * 1024)} MB")
+
+    def _update_ready(self, installer: Path) -> None:
+        self.update_label.setText(f"NUEVA VERSIÓN {self.release.version}")
+        answer = QMessageBox.question(
+            self, APP_NAME,
+            f"Sunny {self.release.version} está lista para instalarse.\n\nSunny se cierra, se instala sola y vuelve a abrirse. "
+            "Si tienes reglas sin aplicar, guárdalas antes.\n\n¿Instalar ahora?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            self.btn_update.setEnabled(True)
+            return
+        install(installer)
+        QApplication.instance().quit()
+
+    def _update_failed(self, message: str) -> None:
+        self.update_label.setText(f"NUEVA VERSIÓN {self.release.version}")
+        self.btn_update.setEnabled(True)
+        QMessageBox.warning(self, APP_NAME, f"No se pudo bajar la actualización: {message}.\n\nPuedes bajarla a mano:\n{self.release.page}")
 
     # ------------------------------------------------------------------ misc
     def _settings(self) -> None:
-        current = load_settings()
-        dlg = SettingsDialog(self, current.get("api_key", ""), current.get("model", ""), bool(current.get("use_model")))
+        dlg = SettingsDialog(self, bool(load_settings().get("check_updates", True)))
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            save_settings(dlg.key.text().strip(), dlg.model.currentText().strip() or DEFAULT_MODEL, dlg.use_model.isChecked())
+            save_settings(dlg.check_updates.isChecked())
 
     def _about(self) -> None:
         QMessageBox.about(self, f"Acerca de {APP_NAME}", f"""
 <h2 style="margin:0">{APP_NAME} <span style="color:{SUN_DARK}">{APP_KANA}</span> <small>v{__version__}</small></h2>
 <p>Dices en palabras qué quieres resaltar en un Excel y Sunny lo convierte en formato condicional:
-reglas que Excel sigue aplicando cuando cambian los datos. El original no se toca.</p>
-<p>Las órdenes se entienden aquí mismo, en español, sin internet. Opcionalmente puede pedírselo a
-<a href="https://www.anthropic.com/claude">Claude</a> (API de Anthropic, con tu clave); entonces solo viajan las cabeceras y la orden.</p>
+reglas que Excel sigue aplicando cuando cambian los datos. El original no se toca. Las órdenes se
+entienden aquí mismo, en español, sin internet.</p>
 <p><b>Créditos</b><br>
 Diseño: estética Komi Store (papel y tinta).<br>
 Excel: <a href="https://openpyxl.readthedocs.io/">openpyxl</a> (MIT).<br>

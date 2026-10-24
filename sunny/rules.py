@@ -1,8 +1,8 @@
-"""The rule model: what the planner produces and what the workbook module applies.
+"""The rule model: what the parser produces and what the workbook module applies.
 
 A rule says *which column* is tested, *how* (the condition), *what gets painted* (the cell or
 the whole row) and *with what style*. Rules are plain data so they can be shown to the user,
-edited, saved as JSON and applied without any model in the loop.
+edited, saved as JSON and applied again later. PLAN_SCHEMA describes that JSON.
 """
 
 from __future__ import annotations

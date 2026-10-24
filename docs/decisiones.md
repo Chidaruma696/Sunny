@@ -39,4 +39,18 @@ Cómo entiende:
 
 Primera frase real que falló (0.2.1): «pinta todo lo que diga vocho de verde». «Diga» se entendía bien como *contiene*, pero al no nombrar columna se buscaba «vocho» como valor exacto de celda, y en la hoja va dentro de textos más largos («VW VOCHO 2001»). Ahora, con contiene / empieza / termina, la columna se deduce buscando el trozo dentro de los valores, y el índice de valores ya no salta las columnas de texto libre (antes, más de 500 valores distintos = fuera), que son justo donde se busca por trozos.
 
+## 2026-10-24 · Claude fuera del todo (0.3.0)
+
+En la 0.2.0 Claude quedó como opción apagada, pero seguía asomando: una casilla en Ajustes, una clave que guardar, `--claude` en la terminal, una dependencia de 20 MB y párrafos en el README. Para la gente a la que va dirigida Sunny todo eso es ruido y una pregunta que no quieren contestar. Se quita entero: `planner.py`, el SDK, los ajustes y las menciones. Lo que entiende Sunny lo entiende el intérprete, y cada frase que falle se arregla ahí. Lo de arriba sobre el planificador queda como historia.
+
+## 2026-10-24 · Actualizarse desde GitHub (0.3.0)
+
+Las correcciones del intérprete van a salir a menudo (cada frase de oficina que no entienda es una), y pedirle a la gente que vuelva a bajar un instalador no funciona. Sunny se actualiza sola desde las releases del repositorio, sin servidor propio:
+
+- Al abrir (y con «Buscar actualización» abajo), `updater.py` pide `/releases/latest` a la API pública de GitHub con la biblioteca estándar, sin cuenta ni token; 60 consultas por hora y por IP sobran. Compara la etiqueta con la versión como números, así `0.10` gana a `0.9`.
+- Solo cuenta un activo `*-setup.exe` servido por GitHub (`github.com` u `objects.githubusercontent.com`) por HTTPS. Junto a él, `build.ps1` publica `*-setup.exe.sha256`, y la descarga se comprueba contra esa huella antes de instalar; si no coincide, se borra y no se instala. No es una firma (quien pueda publicar en el repo puede publicar las dos cosas), pero sí garantiza que lo bajado es lo que se subió.
+- Nunca se instala sin pulsar ACTUALIZAR y confirmar. Entonces el instalador se lanza con `/SILENT /SP- /SUPPRESSMSGBOXES /NORESTART /RELAUNCH` y Sunny se cierra para que puedan reemplazarse sus archivos. `/RELAUNCH` es un parámetro propio: la entrada `[Run]` normal lleva `skipifsilent` y en silencio no abriría nada, así que hay otra entrada con `Check: Relaunch` ([Code]) que solo corre con ese parámetro.
+- Sin red o con GitHub caído, la comprobación de arranque calla; la de a mano avisa. Se puede apagar en Ajustes.
+- En desarrollo (sin PyInstaller) el botón abre la página de la release en el navegador en vez de instalar.
+
 Las descripciones que ve el usuario las genera `describe` a partir de la regla («Filas con Estado igual a PENDIENTE, en rojo»), así son iguales vengan del intérprete, de Claude o de un JSON guardado. Probado con 23 pruebas de frases, además de las de reglas y libro.

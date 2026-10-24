@@ -29,9 +29,8 @@
 
 > [!IMPORTANT]
 > **Nada sale de tu máquina.** Sunny entiende las órdenes en español por sí sola, sin internet, sin cuenta y sin
-> clave. Opcionalmente puede preguntarle a Claude (con tu propia clave de API, apagado por defecto); incluso entonces
-> solo manda las cabeceras de las columnas, su tipo y tu frase, nunca un valor de celda. El repositorio ignora
-> `*.xlsx` para que los archivos de la oficina nunca acaben en git por accidente.
+> clave. Lo único que pregunta a la red es si hay una versión nueva. El repositorio ignora `*.xlsx` para que los
+> archivos de la oficina nunca acaben en git por accidente.
 
 <br/>
 
@@ -40,6 +39,8 @@
 1. Abre la [última release](https://github.com/Chidaruma696/Sunny/releases/latest) y baja `Sunny-x.y.z-setup.exe`.
 2. Ejecútalo. Se instala para tu usuario sin pedir permisos de administrador. No hace falta Python ni nada más.
 3. Abre Sunny desde el menú Inicio. Ya está: no hay nada que configurar.
+
+**Las actualizaciones llegan solas.** Al abrirse, Sunny le pregunta a GitHub si hay una release más nueva; si la hay, arriba a la derecha aparece el aviso *NUEVA VERSIÓN* y el botón **ACTUALIZAR**. Al pulsarlo baja el instalador, lo comprueba contra la huella SHA-256 publicada junto a él, cierra Sunny, instala en silencio y la vuelve a abrir. No se instala nada sin pulsar el botón, y la comprobación se puede apagar en *Ajustes* (abajo hay también *Buscar actualización* para mirar a mano).
 
 <br/>
 
@@ -61,7 +62,7 @@ Antes de escribir nada ves cada regla como una línea («Filas con Estado PENDIE
 
 1. `workbook.py` lee la forma de la hoja: cabeceras, tipo de cada columna (número, fecha, texto), cuántas filas, y qué valores de texto viven en qué columna.
 2. `parser.py` entiende la frase en español, sin modelo: la parte en órdenes (comas, «y», «pero», «;»), lee las palabras de estilo (*rojo, verde, amarillo, azul, naranja, gris, morado, negrita, cursiva, tachado*, o un `#hex`), el alcance (*fila* o *celda*), la columna (una cabecera que nombres, en singular o plural, o la columna que contiene el valor que dices: *«rojo los PENDIENTE»* encuentra *Estado* sola) y la condición (*sea, no sea, mayor de, más de, menor que, entre, contenga, empiece por, termine en, vacío, sin, repetido, X o Y*). Los números entienden *50 mil*, *$12,000.50*, *1.5 millones*; las fechas *31/01/2026*. Lo que no entiende lo dice tal cual, nunca lo adivina.
-3. `rules.py` valida cada regla (columna conocida, operador con sentido, color real) y descarta la rara sin perder las demás. Opcionalmente, `planner.py` puede preguntarle a Claude en vez de al intérprete (Ajustes → *Usar Claude*, con tu clave de API): mismo esquema JSON, mismas reglas, y solo viajan las cabeceras.
+3. `rules.py` valida cada regla (columna conocida, operador con sentido, color real) y descarta la rara sin perder las demás.
 4. `workbook.py` cuenta las coincidencias en Python para la vista previa y, al pulsar **APLICAR**, escribe `FormulaRule`s con [openpyxl](https://openpyxl.readthedocs.io/) en una copia. Las fórmulas fijan la columna que miran (`$C2="PENDIENTE"`), protegen las comparaciones numéricas con `ISNUMBER` para que un texto nunca cuente como «mayor que», y expresan las fechas como `DATE(a,m,d)`.
 
 La ventana es Qt ([PySide6](https://doc.qt.io/qtforpython-6/)) con la estética Komi: papel y tinta, esquinas rectas, sombras duras, paleta de sol. La interfaz está en español.
@@ -84,11 +85,7 @@ Sunny.exe --cli ventas.xlsx --reglas mes.json -o listo.xlsx     # aplica reglas 
 | `-o ARCHIVO.xlsx` | Dónde guardar (por defecto, `<nombre> - Sunny.xlsx` junto al original) |
 | `--reglas REGLAS.json` | Aplicar reglas guardadas en vez de entender una frase |
 | `--guardar-reglas REGLAS.json` | Guardar las reglas obtenidas |
-| `--claude` | Que la frase la entienda Claude en vez del intérprete propio (necesita clave de API) |
-| `--modelo MODELO` | Modelo de Claude, con `--claude` |
 | `--cli` | Trabajar sin abrir la ventana |
-
-Con `--claude`, la clave de la API sale de los ajustes que guarda la ventana o de `ANTHROPIC_API_KEY`.
 
 <br/>
 
@@ -119,8 +116,8 @@ Mapa:
 sunny/rules.py      Modelo de regla, esquema JSON, validación
 sunny/parser.py     La orden en español entendida sin modelo (trozos, estilos, columnas, condiciones)
 sunny/workbook.py   Forma de la hoja, índice de valores, conteo para la vista previa, formato condicional con openpyxl
-sunny/planner.py    Opcional: llamada a Claude con salida estructurada (cabeceras + orden entran, reglas salen)
-sunny/settings.py   Clave de la API y modelo, compartidos por ventana y CLI
+sunny/settings.py   Opciones (buscar actualizaciones)
+sunny/updater.py    Última release en GitHub, descarga, comprobación SHA-256, instalación silenciosa con reapertura
 sunny/gui.py        Ventana PySide6 (arrastrar y soltar, tabla de vista previa, aplicar)
 sunny/theme.py      QSS Komi, paleta Sunny
 sunny/cli.py        Argumentos y punto de entrada
