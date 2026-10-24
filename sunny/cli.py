@@ -10,6 +10,20 @@ from pathlib import Path
 from . import APP_NAME, __version__
 
 
+def _attach_console() -> None:
+    """Sunny.exe is a windowed program (no console), so in --cli mode it has no stdout. On Windows,
+    attach to the console it was launched from, so the output lands in that terminal."""
+    if sys.platform == "win32" and sys.stdout is None:
+        import ctypes
+
+        if ctypes.windll.kernel32.AttachConsole(-1):
+            sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)  # noqa: SIM115
+            sys.stderr = sys.stdout
+    # Windows consoles often run in cp1252 and cannot draw ✓ ⚠ ✗.
+    if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="sunny",
@@ -31,8 +45,7 @@ def main(argv: list[str] | None = None) -> int:
 
         return run(args.excel, args.orden, args.hoja)
 
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="replace")
+    _attach_console()
     if not args.excel:
         p.error("indica el archivo .xlsx")
     source = Path(args.excel)
