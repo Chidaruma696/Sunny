@@ -1,0 +1,5 @@
+PySide6-Essentials>=6.7
+openpyxl>=3.1
+anthropic>=1.0
+pyinstaller>=6.10
+pytest>=8

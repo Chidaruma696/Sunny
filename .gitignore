@@ -1,0 +1,14 @@
+# Environment and build
+.venv/
+build/
+dist/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+installer/Output/
+
+# Data: office spreadsheets are personal. Never in the repo.
+*.xlsx
+*.xlsm
+!tests/fixtures/*.xlsx
